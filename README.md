@@ -17,7 +17,7 @@ Le script est prévu pour une VM Debian 12 créée depuis Freebox OS, avec les d
 
 ```bash
 /mnt/Freebox
-/mnt/Freebox240
+/mnt/Freebox2
 ```
 
 ---
