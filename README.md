@@ -136,13 +136,13 @@ wget -O Freebox_Delta_VM_Plex_RuTorrent.sh https://github.com/PFranck06/Freebox_
 Rendre le script exécutable :
 
 ```bash
-chmod +x install_freebox_media_vm.sh
+chmod +x Freebox_Delta_VM_Plex_RuTorrent.sh
 ```
 
 Lancer l’installation :
 
 ```bash
-sudo bash install_freebox_media_vm.sh
+sudo bash Freebox_Delta_VM_Plex_RuTorrent.sh
 ```
 
 ---
