@@ -130,7 +130,7 @@ rTorrent peer    : 50000
 Télécharger le script sur la VM :
 
 ```bash
-wget -O install_freebox_media_vm.sh https://raw.githubusercontent.com/USER/REPO/main/install_freebox_media_vm_final_v10.sh
+wget -O Freebox_Delta_VM_Plex_RuTorrent.sh https://github.com/PFranck06/Freebox_Delta_VM_Plex_RuTorrent.sh
 ```
 
 Rendre le script exécutable :
