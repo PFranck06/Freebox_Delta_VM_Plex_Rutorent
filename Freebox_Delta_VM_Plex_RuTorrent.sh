@@ -15,7 +15,7 @@
 #   - lets you choose which actions to run
 #
 # Run:
-#   sudo bash install_freebox_media_vm_final_v10.sh
+#   sudo bash install_freebox_media_vm_final_v11.sh
 
 set -Eeuo pipefail
 
@@ -24,7 +24,7 @@ export DEBIAN_FRONTEND=noninteractive
 # -----------------------------
 # Static choices
 # -----------------------------
-SCRIPT_VERSION="v10"
+SCRIPT_VERSION="v11"
 
 MAIN_USER="freebox"
 MAIN_GROUP="freebox"
@@ -380,7 +380,7 @@ fi
 # -----------------------------
 log "Questions initiales"
 
-DEFAULT_SSH_PORT="${SAVED_SSH_PORT:-2222}"
+DEFAULT_SSH_PORT="${SAVED_SSH_PORT:-22222}"
 if [[ "$DO_SSH_FIREWALL" == "yes" ]]; then
   SSH_PORT="$(prompt "Port SSH souhaité" "$DEFAULT_SSH_PORT")"
 else
@@ -874,6 +874,260 @@ if [[ "$DO_APACHE" == "yes" ]]; then
     SERVERNAME_LINE="ServerName ${DOMAIN_NAME}"
   fi
 
+  log "Création de la page d'accueil Apache Freebox Delta"
+
+  cat > /var/www/html/index.html <<'EOF'
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Freebox Delta Media Server</title>
+  <meta name="robots" content="noindex,nofollow">
+  <style>
+    :root {
+      --bg1: #111827;
+      --bg2: #0f172a;
+      --card: rgba(255,255,255,.09);
+      --card-border: rgba(255,255,255,.18);
+      --text: #f8fafc;
+      --muted: #cbd5e1;
+      --accent: #00a8ff;
+      --plex: #e5a00d;
+      --rutorrent: #4ade80;
+      --paypal: #0070ba;
+      --shadow: 0 20px 60px rgba(0,0,0,.35);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(0,168,255,.28), transparent 36rem),
+        radial-gradient(circle at bottom right, rgba(229,160,13,.18), transparent 34rem),
+        linear-gradient(135deg, var(--bg1), var(--bg2));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+    }
+
+    main {
+      width: min(980px, 100%);
+    }
+
+    .hero {
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: .5rem;
+      padding: .45rem .8rem;
+      border: 1px solid var(--card-border);
+      border-radius: 999px;
+      background: rgba(255,255,255,.08);
+      color: var(--muted);
+      font-size: .9rem;
+      margin-bottom: 1rem;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(2rem, 6vw, 4.4rem);
+      line-height: 1;
+      letter-spacing: -.06em;
+    }
+
+    .subtitle {
+      margin: 1rem auto 0;
+      max-width: 720px;
+      color: var(--muted);
+      font-size: clamp(1rem, 2vw, 1.25rem);
+      line-height: 1.6;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1rem;
+    }
+
+    .card {
+      min-height: 230px;
+      padding: 1.4rem;
+      border: 1px solid var(--card-border);
+      border-radius: 26px;
+      background: var(--card);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(18px);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      transition: transform .18s ease, border-color .18s ease, background .18s ease;
+    }
+
+    .card:hover {
+      transform: translateY(-4px);
+      border-color: rgba(255,255,255,.35);
+      background: rgba(255,255,255,.12);
+    }
+
+    .icon {
+      width: 48px;
+      height: 48px;
+      display: grid;
+      place-items: center;
+      border-radius: 16px;
+      font-size: 1.8rem;
+      background: rgba(255,255,255,.12);
+    }
+
+    .card h2 {
+      margin: 1rem 0 .4rem;
+      font-size: 1.45rem;
+    }
+
+    .card p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    .actions {
+      margin-top: 1.2rem;
+    }
+
+    a.button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      padding: .85rem 1rem;
+      border-radius: 16px;
+      color: #fff;
+      text-decoration: none;
+      font-weight: 800;
+      letter-spacing: .01em;
+    }
+
+    .plex {
+      background: linear-gradient(135deg, var(--plex), #ffbf3f);
+      color: #111;
+    }
+
+    .rutorrent {
+      background: linear-gradient(135deg, #16a34a, var(--rutorrent));
+      color: #052e16;
+    }
+
+    .paypal {
+      background: linear-gradient(135deg, var(--paypal), #003087);
+    }
+
+    footer {
+      margin-top: 1.4rem;
+      text-align: center;
+      color: var(--muted);
+      font-size: .92rem;
+    }
+
+    code {
+      color: #e2e8f0;
+      background: rgba(255,255,255,.08);
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: .45rem;
+      padding: .12rem .35rem;
+    }
+
+    @media (max-width: 800px) {
+      body {
+        padding: 1rem;
+      }
+
+      .grid {
+        grid-template-columns: 1fr;
+      }
+
+      .card {
+        min-height: 190px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="hero">
+      <div class="badge">🚀 Freebox Delta VM Debian Media Server</div>
+      <h1>Freebox Delta</h1>
+      <p class="subtitle">
+        Accès rapide aux services multimédias installés sur la VM Debian :
+        Plex, ruTorrent et support du projet.
+      </p>
+    </section>
+
+    <section class="grid">
+      <article class="card">
+        <div>
+          <div class="icon">▶</div>
+          <h2>Plex</h2>
+          <p>Bibliothèque multimédia et streaming local depuis le serveur Plex de la VM.</p>
+        </div>
+        <div class="actions">
+          <a id="plexLink" class="button plex" href="http://localhost:32400/web">Ouvrir Plex</a>
+        </div>
+      </article>
+
+      <article class="card">
+        <div>
+          <div class="icon">⬇</div>
+          <h2>ruTorrent</h2>
+          <p>Interface web rTorrent protégée par authentification Apache.</p>
+        </div>
+        <div class="actions">
+          <a class="button rutorrent" href="/rutorrent">Ouvrir ruTorrent</a>
+        </div>
+      </article>
+
+      <article class="card">
+        <div>
+          <div class="icon">❤</div>
+          <h2>Donation</h2>
+          <p>Soutenir le développement et les scripts Freebox Delta.</p>
+        </div>
+        <div class="actions">
+          <a class="button paypal" href="https://www.paypal.com/paypalme/FPLESSY565" target="_blank" rel="noopener noreferrer">
+            PayPal @FPLESSY565
+          </a>
+        </div>
+      </article>
+    </section>
+
+    <footer>
+      Hôte détecté : <code id="hostName">...</code>
+    </footer>
+  </main>
+
+  <script>
+    const host = window.location.hostname || "localhost";
+    document.getElementById("hostName").textContent = host;
+    document.getElementById("plexLink").href = "http://" + host + ":32400/web";
+  </script>
+</body>
+</html>
+EOF
+
+  chown www-data:www-data /var/www/html/index.html
+  chmod 644 /var/www/html/index.html
+
   cat > /etc/apache2/sites-available/freebox-media.conf <<EOF
 <VirtualHost *:80>
     ${SERVERNAME_LINE}
@@ -1065,6 +1319,7 @@ echo "Apache                           : $(service_status_short apache2.service)
 echo "rTorrent                         : $(service_status_short rtorrent.service)"
 echo "Plex Media Server                : $(service_status_short plexmediaserver.service)"
 echo "Plex Claim                       : ${PLEX_CLAIM_STATUS}"
+echo "Accueil Apache                   : http://<IP_VM>/"
 echo "ruTorrent                        : http://<IP_VM>/rutorrent"
 if [[ -n "${DOMAIN_NAME}" ]]; then
   echo "ruTorrent domaine                : https://${DOMAIN_NAME}/rutorrent"
