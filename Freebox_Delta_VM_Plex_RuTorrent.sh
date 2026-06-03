@@ -15,7 +15,7 @@
 #   - lets you choose which actions to run
 #
 # Run:
-#   sudo bash install_freebox_media_vm_final_v11.sh
+#   sudo bash install_freebox_media_vm_final_v15.sh
 
 set -Eeuo pipefail
 
@@ -24,7 +24,7 @@ export DEBIAN_FRONTEND=noninteractive
 # -----------------------------
 # Static choices
 # -----------------------------
-SCRIPT_VERSION="v11"
+SCRIPT_VERSION="v15"
 
 MAIN_USER="freebox"
 MAIN_GROUP="freebox"
@@ -42,6 +42,7 @@ LOG_FILE="/root/freebox-media-install.log"
 CREDENTIALS_FILE="/root/freebox-media-credentials.txt"
 
 PLEX_CLAIM_STATUS="non vérifié"
+COMMAND="${1:-auto}"
 
 # -----------------------------
 # Colours
@@ -213,6 +214,7 @@ generate_rutorrent_password() {
   ok "Mot de passe ruTorrent généré automatiquement."
 }
 
+
 load_existing_rutorrent_password_for_summary() {
   RUTORRENT_HTTP_PASS=""
 
@@ -224,6 +226,290 @@ load_existing_rutorrent_password_for_summary() {
     RUTORRENT_HTTP_PASS="inchangé / non connu"
   fi
 }
+
+reset_audit_recommendations() {
+  AUDIT_ISSUES=0
+  REC_PACKAGES="no"
+  REC_SSH_FIREWALL="no"
+  REC_DISKS_PERMS="no"
+  REC_PLEX_INSTALL="no"
+  REC_RTORRENT="no"
+  REC_RUTORRENT_INSTALL="no"
+  REC_RUTORRENT_PASSWORD="no"
+  REC_APACHE="no"
+  REC_SSL="no"
+  REC_PLEX_CLAIM="no"
+}
+
+audit_ok() {
+  local label="$1"
+  local detail="${2:-}"
+  ok "✓ ${label}${detail:+ - ${detail}}"
+}
+
+audit_warn() {
+  local label="$1"
+  local detail="${2:-}"
+  warn "✗ ${label}${detail:+ - ${detail}}"
+  AUDIT_ISSUES=$((AUDIT_ISSUES + 1))
+}
+
+configuration_audit() {
+  reset_audit_recommendations
+
+  echo
+  log "Commande update : vérification de la configuration existante"
+
+  # rTorrent
+  RTORRENT_SERVICE_PRESENT="no"
+  RTORRENT_SERVICE_ACTIVE="no"
+  RTORRENT_PROCESS_PRESENT="no"
+
+  if systemctl list-unit-files 2>/dev/null | grep -q '^rtorrent\.service'; then
+    RTORRENT_SERVICE_PRESENT="yes"
+  elif [[ -f /etc/systemd/system/rtorrent.service || -f /lib/systemd/system/rtorrent.service ]]; then
+    RTORRENT_SERVICE_PRESENT="yes"
+  fi
+
+  if [[ "${RTORRENT_SERVICE_PRESENT}" == "yes" ]] && systemctl --quiet is-active rtorrent.service; then
+    RTORRENT_SERVICE_ACTIVE="yes"
+  fi
+
+  if pgrep -u "${MAIN_USER}" -x rtorrent >/dev/null 2>&1 || pgrep -x rtorrent >/dev/null 2>&1; then
+    RTORRENT_PROCESS_PRESENT="yes"
+  fi
+
+  if [[ "${RTORRENT_SERVICE_ACTIVE}" == "yes" ]]; then
+    audit_ok "rTorrent service" "actif"
+  elif [[ "${RTORRENT_PROCESS_PRESENT}" == "yes" ]]; then
+    audit_ok "rTorrent process" "actif hors service systemd"
+    warn "rTorrent fonctionne, mais rtorrent.service n'est pas actif. Aucune correction forcée tant que les ports répondent."
+  elif [[ "${RTORRENT_SERVICE_PRESENT}" == "yes" ]]; then
+    audit_warn "rTorrent service" "présent mais inactif"
+    REC_RTORRENT="yes"
+  else
+    audit_warn "rTorrent service" "absent"
+    REC_RTORRENT="yes"
+  fi
+
+  if [[ -f "/home/${MAIN_USER}/.rtorrent.rc" ]] \
+    && grep -q "network.scgi.open_port = ${RTORRENT_SCGI_HOST}:${RTORRENT_SCGI_PORT}" "/home/${MAIN_USER}/.rtorrent.rc" \
+    && grep -q "network.port_range.set = ${RTORRENT_PEER_PORT}-${RTORRENT_PEER_PORT}" "/home/${MAIN_USER}/.rtorrent.rc"; then
+    audit_ok "Configuration rTorrent" ".rtorrent.rc cohérent"
+  else
+    audit_warn "Configuration rTorrent" ".rtorrent.rc absent ou incomplet"
+    REC_RTORRENT="yes"
+  fi
+
+  # ruTorrent
+  if [[ -d "${RUTORRENT_DIR}" ]]; then
+    audit_ok "ruTorrent dossier" "${RUTORRENT_DIR}"
+  else
+    audit_warn "ruTorrent dossier" "absent"
+    REC_PACKAGES="yes"
+    REC_RUTORRENT_INSTALL="yes"
+    REC_RUTORRENT_PASSWORD="yes"
+    REC_APACHE="yes"
+  fi
+
+  if [[ -f "${RUTORRENT_DIR}/conf/config.local.php" ]] \
+    && grep -q "\$scgi_host = \"${RTORRENT_SCGI_HOST}\"" "${RUTORRENT_DIR}/conf/config.local.php" \
+    && grep -q "\$scgi_port = ${RTORRENT_SCGI_PORT}" "${RUTORRENT_DIR}/conf/config.local.php" \
+    && grep -q "\$topDirectory = \"/mnt/\"" "${RUTORRENT_DIR}/conf/config.local.php"; then
+    audit_ok "Configuration ruTorrent" "SCGI + topDirectory OK"
+  else
+    audit_warn "Configuration ruTorrent" "config.local.php absent ou non conforme"
+    REC_RUTORRENT_INSTALL="yes"
+    REC_APACHE="yes"
+  fi
+
+  if [[ -d "${RUTORRENT_DIR}/plugins" ]]; then
+    AUDIT_PLUGIN_COUNT="$(find "${RUTORRENT_DIR}/plugins" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l || echo 0)"
+    if [[ "${AUDIT_PLUGIN_COUNT}" -ge 10 ]]; then
+      audit_ok "Plugins ruTorrent" "${AUDIT_PLUGIN_COUNT} dossiers"
+    else
+      audit_warn "Plugins ruTorrent" "${AUDIT_PLUGIN_COUNT} dossiers seulement"
+      REC_RUTORRENT_INSTALL="yes"
+      REC_APACHE="yes"
+    fi
+  else
+    audit_warn "Plugins ruTorrent" "dossier plugins absent"
+    REC_RUTORRENT_INSTALL="yes"
+    REC_APACHE="yes"
+  fi
+
+  if [[ -f "${RUTORRENT_DIR}/.htpasswd" ]]; then
+    audit_ok "Mot de passe ruTorrent" ".htpasswd présent"
+  else
+    audit_warn "Mot de passe ruTorrent" ".htpasswd absent"
+    REC_RUTORRENT_PASSWORD="yes"
+    REC_APACHE="yes"
+  fi
+
+  # Plex
+  if dpkg -s plexmediaserver >/dev/null 2>&1; then
+    if systemctl --quiet is-active plexmediaserver.service; then
+      audit_ok "Plex Media Server" "installé et actif"
+    else
+      audit_warn "Plex Media Server" "installé mais inactif"
+      REC_PLEX_INSTALL="yes"
+    fi
+  else
+    audit_warn "Plex Media Server" "non installé"
+    REC_PACKAGES="yes"
+    REC_PLEX_INSTALL="yes"
+  fi
+
+  if wait_for_port 127.0.0.1 32400 3; then
+    audit_ok "Port Plex local" "127.0.0.1:32400 répond"
+  else
+    audit_warn "Port Plex local" "127.0.0.1:32400 ne répond pas"
+    REC_PLEX_INSTALL="yes"
+  fi
+
+  PLEX_PREFS="/var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Preferences.xml"
+  PLEX_IDENTITY="/tmp/plex-identity-audit.xml"
+  if curl -sS "http://127.0.0.1:32400/identity" -o "${PLEX_IDENTITY}" 2>/dev/null \
+    && grep -q 'claimed="1"' "${PLEX_IDENTITY}"; then
+    audit_ok "Plex Claim" "déjà revendiqué"
+  elif [[ -f "${PLEX_PREFS}" ]] && grep -Eq 'PlexOnlineToken="[^"]+"' "${PLEX_PREFS}"; then
+    audit_ok "Plex Claim" "token présent dans Preferences.xml"
+  else
+    audit_warn "Plex Claim" "non revendiqué ou non vérifiable"
+    REC_PLEX_CLAIM="yes"
+  fi
+
+  # Apache / homepage
+  if systemctl --quiet is-active apache2.service; then
+    audit_ok "Apache" "actif"
+  else
+    audit_warn "Apache" "inactif ou absent"
+    REC_PACKAGES="yes"
+    REC_APACHE="yes"
+  fi
+
+  if [[ -f /var/www/html/index.html ]] \
+    && grep -q "Freebox Delta Media Server" /var/www/html/index.html \
+    && grep -q "paypalme/FPLESSY565" /var/www/html/index.html \
+    && grep -q "github.com/PFranck06/Freebox_Delta_VM_Plex_Rutorent" /var/www/html/index.html \
+    && grep -q "/rutorrent" /var/www/html/index.html \
+    && grep -q ":32400/web" /var/www/html/index.html; then
+    audit_ok "Page d'accueil Apache" "Freebox Delta + Plex + ruTorrent + GitHub + PayPal"
+  else
+    audit_warn "Page d'accueil Apache" "absente ou non conforme"
+    REC_APACHE="yes"
+  fi
+
+  if [[ -f /etc/apache2/sites-enabled/freebox-media.conf || -f /etc/apache2/sites-available/freebox-media.conf ]]; then
+    audit_ok "VirtualHost Apache" "freebox-media présent"
+  else
+    audit_warn "VirtualHost Apache" "freebox-media absent"
+    REC_APACHE="yes"
+  fi
+
+  # Ports
+  if ss -ltn 2>/dev/null | grep -q ":80 "; then
+    audit_ok "Port HTTP" "80 en écoute"
+  else
+    audit_warn "Port HTTP" "80 non détecté"
+    REC_APACHE="yes"
+  fi
+
+  RTORRENT_SCGI_OK="no"
+  RTORRENT_PEER_OK="no"
+
+  if ss -ltn 2>/dev/null | grep -q ":${RTORRENT_SCGI_PORT} "; then
+    RTORRENT_SCGI_OK="yes"
+    audit_ok "Port SCGI rTorrent" "${RTORRENT_SCGI_PORT} en écoute"
+  else
+    audit_warn "Port SCGI rTorrent" "${RTORRENT_SCGI_PORT} non détecté"
+    REC_RTORRENT="yes"
+  fi
+
+  if ss -ltn 2>/dev/null | grep -q ":${RTORRENT_PEER_PORT} "; then
+    RTORRENT_PEER_OK="yes"
+    audit_ok "Port peer rTorrent" "${RTORRENT_PEER_PORT} en écoute"
+  else
+    audit_warn "Port peer rTorrent" "${RTORRENT_PEER_PORT} non détecté"
+    REC_RTORRENT="yes"
+  fi
+
+  if [[ "${RTORRENT_SCGI_OK}" == "yes" && "${RTORRENT_PEER_OK}" == "yes" ]] \
+    && [[ -f "/home/${MAIN_USER}/.rtorrent.rc" ]] \
+    && grep -q "network.scgi.open_port = ${RTORRENT_SCGI_HOST}:${RTORRENT_SCGI_PORT}" "/home/${MAIN_USER}/.rtorrent.rc" \
+    && grep -q "network.port_range.set = ${RTORRENT_PEER_PORT}-${RTORRENT_PEER_PORT}" "/home/${MAIN_USER}/.rtorrent.rc"; then
+    REC_RTORRENT="no"
+  fi
+
+  # Firewall
+  if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+    audit_ok "Firewall UFW" "actif"
+  else
+    audit_warn "Firewall UFW" "inactif ou absent"
+    REC_SSH_FIREWALL="yes"
+  fi
+
+  for required_port in "${SAVED_SSH_PORT:-22222}" 80 443 32400 "${RTORRENT_PEER_PORT}"; do
+    if ufw status 2>/dev/null | grep -q "${required_port}"; then
+      audit_ok "Règle UFW ${required_port}" "présente"
+    else
+      audit_warn "Règle UFW ${required_port}" "absente ou non détectée"
+      REC_SSH_FIREWALL="yes"
+    fi
+  done
+
+  # Freebox disks
+  if [[ ${#FREEBOX_MOUNTS[@]} -gt 0 ]]; then
+    audit_ok "Disques Freebox détectés" "${FREEBOX_MOUNTS[*]}"
+  else
+    audit_warn "Disques Freebox détectés" "aucun /mnt/Freebox*"
+    REC_DISKS_PERMS="yes"
+  fi
+
+  for FB_MOUNT in "${FREEBOX_MOUNTS[@]}"; do
+    if [[ -d "${FB_MOUNT}" ]] && sudo -u "${MAIN_USER}" test -r "${FB_MOUNT}" && sudo -u "${MAIN_USER}" test -x "${FB_MOUNT}"; then
+      audit_ok "Accès disque ${FB_MOUNT}" "${MAIN_USER} peut parcourir"
+    else
+      audit_warn "Accès disque ${FB_MOUNT}" "${MAIN_USER} ne peut pas parcourir"
+      REC_DISKS_PERMS="yes"
+    fi
+  done
+
+  # Dependencies between recommended actions.
+  if [[ "$REC_RUTORRENT_INSTALL" == "yes" || "$REC_RUTORRENT_PASSWORD" == "yes" ]]; then
+    REC_APACHE="yes"
+  fi
+
+  if [[ "$REC_RTORRENT" == "yes" || "$REC_RUTORRENT_INSTALL" == "yes" || "$REC_PLEX_INSTALL" == "yes" ]]; then
+    REC_DISKS_PERMS="yes"
+  fi
+
+  if [[ "$REC_PLEX_INSTALL" == "yes" || "$REC_RTORRENT" == "yes" || "$REC_RUTORRENT_INSTALL" == "yes" ]]; then
+    REC_PACKAGES="yes"
+  fi
+
+  echo
+  if [[ "$AUDIT_ISSUES" -eq 0 ]]; then
+    ok "Diagnostic terminé : aucune anomalie détectée."
+  else
+    warn "Diagnostic terminé : ${AUDIT_ISSUES} anomalie(s) détectée(s)."
+    echo "Actions recommandées : packages=${REC_PACKAGES}, ssh/firewall=${REC_SSH_FIREWALL}, disks=${REC_DISKS_PERMS}, plex=${REC_PLEX_INSTALL}, rtorrent=${REC_RTORRENT}, rutorrent=${REC_RUTORRENT_INSTALL}, password=${REC_RUTORRENT_PASSWORD}, apache=${REC_APACHE}, ssl=${REC_SSL}, plex_claim=${REC_PLEX_CLAIM}"
+  fi
+}
+
+apply_audit_recommendations() {
+  DO_PACKAGES="$REC_PACKAGES"
+  DO_SSH_FIREWALL="$REC_SSH_FIREWALL"
+  DO_DISKS_PERMS="$REC_DISKS_PERMS"
+  DO_PLEX_INSTALL="$REC_PLEX_INSTALL"
+  DO_RTORRENT="$REC_RTORRENT"
+  DO_RUTORRENT_INSTALL="$REC_RUTORRENT_INSTALL"
+  DO_RUTORRENT_PASSWORD="$REC_RUTORRENT_PASSWORD"
+  DO_APACHE="$REC_APACHE"
+  DO_SSL="$REC_SSL"
+  DO_PLEX_CLAIM="$REC_PLEX_CLAIM"
+}
+
 
 # -----------------------------
 # Start
@@ -238,7 +524,9 @@ echo
 
 load_state_defaults
 
-if is_installed_legacy_or_current; then
+if [[ "$COMMAND" == "update" || "$COMMAND" == "check" || "$COMMAND" == "audit" ]]; then
+  INSTALL_MODE="update"
+elif is_installed_legacy_or_current; then
   INSTALL_MODE="update"
 else
   INSTALL_MODE="fresh"
@@ -281,18 +569,7 @@ DO_SSL="no"
 DO_SSL_ASK="no"
 DO_PLEX_CLAIM="no"
 
-if [[ "$INSTALL_MODE" == "fresh" ]]; then
-  DO_PACKAGES="yes"
-  DO_SSH_FIREWALL="yes"
-  DO_DISKS_PERMS="yes"
-  DO_PLEX_INSTALL="yes"
-  DO_RTORRENT="yes"
-  DO_RUTORRENT_INSTALL="yes"
-  DO_RUTORRENT_PASSWORD="yes"
-  DO_APACHE="yes"
-  DO_SSL_ASK="yes"
-  DO_PLEX_CLAIM="yes"
-else
+show_update_menu_and_select_actions() {
   echo
   echo -e "${BOLD}${CYAN}Actions disponibles pour l'update${RESET}"
   echo "1) Tout mettre à jour / reconfigurer"
@@ -363,6 +640,63 @@ else
       DO_APACHE="yes"
       ;;
   esac
+}
+
+if [[ "$INSTALL_MODE" == "fresh" ]]; then
+  DO_PACKAGES="yes"
+  DO_SSH_FIREWALL="yes"
+  DO_DISKS_PERMS="yes"
+  DO_PLEX_INSTALL="yes"
+  DO_RTORRENT="yes"
+  DO_RUTORRENT_INSTALL="yes"
+  DO_RUTORRENT_PASSWORD="yes"
+  DO_APACHE="yes"
+  DO_SSL_ASK="yes"
+  DO_PLEX_CLAIM="yes"
+else
+  if [[ "$COMMAND" == "update" || "$COMMAND" == "check" || "$COMMAND" == "audit" ]]; then
+    configuration_audit
+
+    if [[ "$COMMAND" == "check" || "$COMMAND" == "audit" ]]; then
+      if [[ "$AUDIT_ISSUES" -eq 0 ]]; then
+        ok "Commande ${COMMAND} : diagnostic seul, aucune action à appliquer."
+      else
+        warn "Commande ${COMMAND} : diagnostic seul. Relance avec 'update' pour appliquer les corrections."
+      fi
+    elif [[ "$AUDIT_ISSUES" -eq 0 ]]; then
+      if ask_yes_no "Aucune anomalie détectée. Ouvrir quand même le menu update ?" "no"; then
+        show_update_menu_and_select_actions
+      else
+        ok "Aucune action sélectionnée."
+      fi
+    else
+      echo
+      echo -e "${BOLD}${CYAN}Mise à jour proposée après diagnostic${RESET}"
+      echo "1) Appliquer les corrections recommandées"
+      echo "2) Ouvrir le menu update classique"
+      echo "3) Diagnostic seulement, ne rien modifier"
+      echo
+
+      AUDIT_CHOICE="$(prompt "Choix" "1")"
+
+      case "$AUDIT_CHOICE" in
+        1)
+          apply_audit_recommendations
+          ;;
+        2)
+          show_update_menu_and_select_actions
+          ;;
+        3)
+          ok "Diagnostic seulement : aucune modification appliquée."
+          ;;
+        *)
+          warn "Choix inconnu : aucune modification appliquée."
+          ;;
+      esac
+    fi
+  else
+    show_update_menu_and_select_actions
+  fi
 fi
 
 # Apache is required when installing ruTorrent or changing its HTTP password.
@@ -896,6 +1230,7 @@ if [[ "$DO_APACHE" == "yes" ]]; then
       --plex: #e5a00d;
       --rutorrent: #4ade80;
       --paypal: #0070ba;
+      --github: #24292f;
       --shadow: 0 20px 60px rgba(0,0,0,.35);
     }
 
@@ -957,7 +1292,7 @@ if [[ "$DO_APACHE" == "yes" ]]; then
 
     .grid {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(4, minmax(0, 1fr));
       gap: 1rem;
     }
 
@@ -1033,6 +1368,10 @@ if [[ "$DO_APACHE" == "yes" ]]; then
       background: linear-gradient(135deg, var(--paypal), #003087);
     }
 
+    .github {
+      background: linear-gradient(135deg, var(--github), #475569);
+    }
+
     footer {
       margin-top: 1.4rem;
       text-align: center;
@@ -1046,6 +1385,12 @@ if [[ "$DO_APACHE" == "yes" ]]; then
       border: 1px solid rgba(255,255,255,.12);
       border-radius: .45rem;
       padding: .12rem .35rem;
+    }
+
+    @media (max-width: 1050px) {
+      .grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
     }
 
     @media (max-width: 800px) {
@@ -1094,6 +1439,19 @@ if [[ "$DO_APACHE" == "yes" ]]; then
         </div>
         <div class="actions">
           <a class="button rutorrent" href="/rutorrent">Ouvrir ruTorrent</a>
+        </div>
+      </article>
+
+      <article class="card">
+        <div>
+          <div class="icon">⌘</div>
+          <h2>GitHub</h2>
+          <p>Code source, README et dernières versions du script Freebox Delta.</p>
+        </div>
+        <div class="actions">
+          <a class="button github" href="https://github.com/PFranck06/Freebox_Delta_VM_Plex_Rutorent" target="_blank" rel="noopener noreferrer">
+            Ouvrir le GitHub
+          </a>
         </div>
       </article>
 
@@ -1301,6 +1659,7 @@ else
     PLEX_CLAIM_STATUS="déjà revendiqué"
   else
     PLEX_CLAIM_STATUS="non vérifié"
+COMMAND="${1:-auto}"
   fi
 fi
 
@@ -1320,6 +1679,7 @@ echo "rTorrent                         : $(service_status_short rtorrent.service
 echo "Plex Media Server                : $(service_status_short plexmediaserver.service)"
 echo "Plex Claim                       : ${PLEX_CLAIM_STATUS}"
 echo "Accueil Apache                   : http://<IP_VM>/"
+echo "GitHub script                    : https://github.com/PFranck06/Freebox_Delta_VM_Plex_Rutorent"
 echo "ruTorrent                        : http://<IP_VM>/rutorrent"
 if [[ -n "${DOMAIN_NAME}" ]]; then
   echo "ruTorrent domaine                : https://${DOMAIN_NAME}/rutorrent"
