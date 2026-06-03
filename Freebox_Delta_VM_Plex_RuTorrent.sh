@@ -380,7 +380,7 @@ fi
 # -----------------------------
 log "Questions initiales"
 
-DEFAULT_SSH_PORT="${SAVED_SSH_PORT:-22222}"
+DEFAULT_SSH_PORT="${SAVED_SSH_PORT:-2212}"
 if [[ "$DO_SSH_FIREWALL" == "yes" ]]; then
   SSH_PORT="$(prompt "Port SSH souhaité" "$DEFAULT_SSH_PORT")"
 else
